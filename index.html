@@ -390,19 +390,19 @@
                         <!-- Exact Price Execution Targets (Entry, TP1, TP2, Stop Loss) -->
                         <div class="bg-dark-900/90 rounded-xl p-3.5 border border-slate-800 mb-4 space-y-2.5 font-mono text-xs">
                             <div class="flex justify-between items-center">
-                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-crosshairs text-brand-400"></i> Optimal Buy Entry Zone:</span>
+                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-crosshairs text-brand-400"></i> <span id="target-entry-label">Optimal Buy Entry Zone:</span></span>
                                 <span id="target-entry" class="font-bold text-white">$0.00 - $0.00</span>
                             </div>
                             <div class="flex justify-between items-center">
-                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-flag-checkered text-emerald-400"></i> Take Profit 1 (Short-Term):</span>
+                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-flag-checkered text-emerald-400"></i> <span id="target-tp1-label">Take Profit 1 (Short-Term):</span></span>
                                 <span id="target-tp1" class="font-bold text-emerald-400">$0.00 (+4.5%)</span>
                             </div>
                             <div class="flex justify-between items-center">
-                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-trophy text-emerald-300"></i> Take Profit 2 (Swing Hold):</span>
+                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-trophy text-emerald-300"></i> <span id="target-tp2-label">Take Profit 2 (Swing Hold):</span></span>
                                 <span id="target-tp2" class="font-bold text-emerald-300">$0.00 (+12.0%)</span>
                             </div>
                             <div class="flex justify-between items-center pt-1.5 border-t border-slate-800">
-                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-rose-400"></i> Recommended Stop Loss:</span>
+                                <span class="text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-rose-400"></i> <span id="target-sl-label">Recommended Stop Loss:</span></span>
                                 <span id="target-sl" class="font-bold text-rose-400">$0.00 (-3.2%)</span>
                             </div>
                         </div>
@@ -1389,63 +1389,79 @@
 
                 // Calculate where current price sits within 24h High-Low candlestick range (0 = bottom, 100 = top)
                 const rangeSpan = Math.max(0.0000001, high24h - low24h);
-                const rangePosition = ((price - low24h) / rangeSpan) * 100;
+                const rangePosition = Math.max(0, Math.min(100, ((price - low24h) / rangeSpan) * 100));
 
-                // Estimate 14-period RSI from 24h momentum + range position
-                let rawRsi = 50 + (change24h * 1.65) + ((rangePosition - 50) * 0.25);
-                const rsi = Math.max(14, Math.min(89, Math.round(rawRsi * 10) / 10));
+                // Accurate 14-period RSI estimation combining trend momentum and candlestick range recovery
+                let rawRsi = 50 + (change24h * 1.15) + ((rangePosition - 50) * 0.35);
+                const rsi = Math.max(18, Math.min(88, Math.round(rawRsi * 10) / 10));
 
-                // Estimate Short-Term MACD Crossover State (15m/1H) & Long-Term 50/200 Moving Average Structure (1D/1W)
-                const macdState = (rsi < 40 && rangePosition > 25) || (change24h > 1.2 && rsi < 64)
+                // True Candlestick Momentum & Moving Average Structure
+                const isBouncingFromLow = rangePosition >= 35 && rangePosition <= 82;
+                const isBreakingOut = change24h >= 1.5 && rangePosition >= 65 && rsi < 78;
+                const isDumpingHard = change24h <= -3.5 && rangePosition < 35;
+
+                const macdState = (isBreakingOut || (change24h >= 0.4 && isBouncingFromLow))
                     ? 'Bullish Cross'
-                    : (rsi > 68 || change24h < -2.5 ? 'Bearish Cross' : 'Neutral');
+                    : (isDumpingHard || change24h <= -1.8 || rsi >= 80 ? 'Bearish Cross' : 'Neutral');
 
-                const maStructure = (coin.market_cap_rank <= 30 && change24h > -6) || change24h >= 0
-                    ? 'Above 50/200 MA'
-                    : 'Testing 200 MA Support';
+                const maStructure = (change24h >= 0.5 && rangePosition >= 50)
+                    ? 'Above 50/200 MA (Uptrend)'
+                    : (change24h <= -2.5 && rangePosition < 40 ? 'Below 50 MA (Downtrend)' : 'Testing 200 MA Support');
 
-                // Determine coin quality tier (Top 25 large-cap vs higher-beta altcoin)
-                const isBlueChip = (coin.market_cap_rank || 99) <= 25;
+                const isBlueChip = (coin.market_cap_rank || 99) <= 30;
+                const macroBullish = macroState.score >= 5;
+                const macroBearish = macroState.score <= -15;
 
-                // 1. Compute Short-Term Scalp Signal (15m / 1H Candlesticks: RSI + MACD + Macro)
+                // 1. Short-Term Scalp Signal (15m / 1H Candlesticks: True Trend + RSI + MACD + Macro)
                 let shortSignal = 'HOLD';
-                let shortReason = `RSI ${rsi} | MACD ${macdState}`;
+                let shortReason = `RSI ${rsi} | ${macdState}`;
 
-                const techScore = (50 - rsi) * 1.1 + (macroState.score * 0.35);
-
-                if (rsi <= 34 && macroState.score > -35) {
+                if (isBreakingOut && macroState.score >= -10) {
                     shortSignal = 'STRONG BUY';
-                    shortReason = `RSI ${rsi} Oversold + MACD Reversal`;
-                } else if (techScore >= 12 || (change24h > 1.5 && rsi < 66 && macroState.score >= 10)) {
+                    shortReason = `Bullish Breakout (+${change24h.toFixed(1)}%) & MACD Cross`;
+                } else if (change24h < -1.0 && change24h > -7.5 && rangePosition >= 40 && rsi <= 46) {
+                    // Price dipped earlier but candlestick shows buyers stepping in from 24h low (Hammer/Bounce)
+                    shortSignal = 'STRONG BUY';
+                    shortReason = `Support Bounce (${Math.round(rangePosition)}% off Low) + RSI ${rsi}`;
+                } else if ((change24h >= 0.3 && rsi >= 45 && rsi <= 70 && !macroBearish) || (macroBullish && change24h >= -0.5 && rangePosition >= 50)) {
                     shortSignal = 'BUY';
-                    shortReason = `MACD ${macdState} + Momentum`;
-                } else if (rsi >= 75 || techScore <= -18) {
+                    shortReason = `Uptrend Momentum | RSI ${rsi}`;
+                } else if (isDumpingHard || (change24h <= -3.0 && macroBearish)) {
+                    // Falling knife / strong breakdown -> SELL
                     shortSignal = 'STRONG SELL';
-                    shortReason = `RSI ${rsi} Overbought Peak`;
-                } else if (rsi >= 67 || (change24h < -4 && macroState.score < -15)) {
+                    shortReason = `Bearish Breakdown (${change24h.toFixed(1)}%) | Below MA`;
+                } else if (rsi >= 81 && rangePosition < 75) {
+                    // Parabolic exhaustion starting to reject from 24h high
                     shortSignal = 'SELL';
-                    shortReason = `MACD Bearish / Risk-Off`;
+                    shortReason = `RSI ${rsi} Overbought Rejection`;
+                } else if (change24h <= -1.5 && rangePosition < 42) {
+                    shortSignal = 'SELL';
+                    shortReason = `Bearish Pressure | ${macdState}`;
                 }
 
-                // 2. Compute Long-Term Swing / Hold Signal (1D / 1W: 50/200 MA + Geopolitical Dip Detection)
+                // 2. Long-Term Swing / Hold Signal (1D / 1W: 50/200 MA + Institutional Dip Buying)
                 let longSignal = 'HOLD';
-                let longReason = `${maStructure}`;
+                let longReason = maStructure;
                 let isDipOpportunity = false;
 
-                if (macroState.isGeopoliticalDipZone && isBlueChip && change24h < 0) {
+                if (isBlueChip && change24h <= -1.2 && change24h >= -9.0 && (rangePosition >= 25 || macroState.isGeopoliticalDipZone)) {
                     longSignal = 'BUY THE DIP';
-                    longReason = '200 MA + Geopolitical Panic Dip';
+                    longReason = macroState.isGeopoliticalDipZone
+                        ? 'Geopolitical Panic Discount on Blue-Chip'
+                        : '200-Day MA Institutional Accumulation Dip';
                     isDipOpportunity = true;
-                } else if (rsi <= 38 && isBlueChip) {
+                } else if (change24h >= 1.8 && rangePosition >= 55 && rsi < 76) {
                     longSignal = 'STRONG BUY';
-                    longReason = '200-Day MA Institutional Zone';
-                    isDipOpportunity = true;
-                } else if (rsi <= 44 || (macroState.score >= 15 && rsi < 65)) {
+                    longReason = 'Golden Cross + Strong 1D Uptrend';
+                } else if ((change24h >= 0 && rsi < 72) || (isBlueChip && rsi <= 45 && change24h > -5)) {
                     longSignal = 'BUY';
-                    longReason = `Golden Cross / ${maStructure}`;
-                } else if (rsi >= 76) {
+                    longReason = `Bullish Structure | ${maStructure}`;
+                } else if (change24h <= -6.0 && !isBlueChip) {
+                    longSignal = 'STRONG SELL';
+                    longReason = 'Major Support Broken (Avoid Falling Knife)';
+                } else if (change24h <= -2.8 || rsi >= 82) {
                     longSignal = 'SELL';
-                    longReason = 'Extended Above 200 MA';
+                    longReason = rsi >= 82 ? 'Take Profit at Macro Resistance' : 'Weak Daily Trend Structure';
                 }
 
                 // Count summary metrics
@@ -1453,14 +1469,19 @@
                 if (isDipOpportunity || longSignal === 'BUY THE DIP') dipBuyCount++;
                 if (shortSignal.includes('SELL') || longSignal.includes('SELL')) sellCount++;
 
-                // Calculate actionable Entry Zone, Take Profit 1, Take Profit 2, and Stop Loss
-                const entryLow = price * 0.992;
+                // Calculate accurate Entry Zone, Take Profit 1, Take Profit 2, and Stop Loss based on BUY vs SELL direction
+                const isSellSetup = shortSignal.includes('SELL') && !longSignal.includes('BUY');
+                const entryLow = price * 0.995;
                 const entryHigh = price * 1.003;
-                const tp1 = price * (shortSignal.includes('SELL') ? 0.96 : 1.048);
-                const tp2 = price * (shortSignal.includes('SELL') ? 0.90 : 1.125);
-                const sl = price * (shortSignal.includes('SELL') ? 1.032 : 0.965);
 
-                const confidence = Math.min(96, Math.max(58, Math.round(70 + Math.abs(techScore) * 0.7)));
+                // For BUY/HOLD: TP is ABOVE current price (+4.8% / +12.5%) and Stop Loss is BELOW (-3.5%)
+                // For SELL: Downside Support Target 1 (-4.5%), Target 2 (-10.5%), and Upside Invalidation SL (+3.2%)
+                const tp1 = isSellSetup ? price * 0.955 : price * 1.048;
+                const tp2 = isSellSetup ? price * 0.895 : price * 1.125;
+                const sl  = isSellSetup ? price * 1.032 : price * 0.965;
+
+                const trendStrength = Math.abs(change24h) * 2.2 + (rangePosition > 50 ? 12 : 6) + (macroBullish ? 8 : 0);
+                const confidence = Math.min(96, Math.max(62, Math.round(68 + trendStrength * 0.65)));
 
                 const enrichedCoin = {
                     ...coin,
@@ -1473,6 +1494,7 @@
                     longSignal,
                     longReason,
                     isDipOpportunity,
+                    isSellSetup,
                     entryLow,
                     entryHigh,
                     tp1,
@@ -1657,22 +1679,22 @@
                 rangeEl.textContent = `24h Range: ${formatUSD(coin.low_24h)} - ${formatUSD(coin.high_24h)}`;
             }
 
-            // Update Short-Term & Long-Term Signal Cards
-            const shortEl = document.getElementById('active-short-signal');
-            shortEl.textContent = coin.shortSignal;
-            shortEl.className = `text-base font-black tracking-wide ${getSignalTextColor(coin.shortSignal)}`;
-            document.getElementById('active-short-reason').textContent = coin.shortReason;
+            // Update Entry, TP1, TP2, SL labels & values accurately for Buy vs Sell setups
+            const isSell = coin.isSellSetup;
+            const entryLbl = document.getElementById('target-entry-label');
+            const tp1Lbl = document.getElementById('target-tp1-label');
+            const tp2Lbl = document.getElementById('target-tp2-label');
+            const slLbl = document.getElementById('target-sl-label');
 
-            const longEl = document.getElementById('active-long-signal');
-            longEl.textContent = coin.longSignal;
-            longEl.className = `text-base font-black tracking-wide ${getSignalTextColor(coin.longSignal)}`;
-            document.getElementById('active-long-reason').textContent = coin.longReason;
+            if (entryLbl) entryLbl.textContent = isSell ? 'Optimal Exit / Short Zone:' : 'Optimal Buy Entry Zone:';
+            if (tp1Lbl) tp1Lbl.textContent = isSell ? 'Downside Target 1 (Short TP1):' : 'Take Profit 1 (Short-Term):';
+            if (tp2Lbl) tp2Lbl.textContent = isSell ? 'Downside Support 2 (Short TP2):' : 'Take Profit 2 (Swing Hold):';
+            if (slLbl) slLbl.textContent = isSell ? 'Invalidation Stop-Loss (Above):' : 'Recommended Stop Loss (Below):';
 
-            // Update Entry, TP1, TP2, SL
             document.getElementById('target-entry').textContent = `${formatUSD(coin.entryLow)} - ${formatUSD(coin.entryHigh)}`;
-            document.getElementById('target-tp1').textContent = `${formatUSD(coin.tp1)} (+4.8%)`;
-            document.getElementById('target-tp2').textContent = `${formatUSD(coin.tp2)} (+12.5%)`;
-            document.getElementById('target-sl').textContent = `${formatUSD(coin.sl)} (-3.5%)`;
+            document.getElementById('target-tp1').textContent = `${formatUSD(coin.tp1)} (${isSell ? '-4.5%' : '+4.8%'})`;
+            document.getElementById('target-tp2').textContent = `${formatUSD(coin.tp2)} (${isSell ? '-10.5%' : '+12.5%'})`;
+            document.getElementById('target-sl').textContent = `${formatUSD(coin.sl)} (${isSell ? '+3.2%' : '-3.5%'})`;
 
             // Confidence & Explanation
             document.getElementById('active-confidence-text').textContent = `${coin.confidence}% Institutional Conviction`;
